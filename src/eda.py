@@ -547,3 +547,72 @@ print(
 print(
     "outputs/preprocessing_samples/bone_age_outliers.png"
 )
+# ============================================================
+# EDGE-LINE / IMAGE ARTIFACT VISUAL CHECK
+# ============================================================
+
+print("\n")
+print("=" * 60)
+print("EDGE-LINE ARTIFACT VISUAL CHECK")
+print("=" * 60)
+
+sample_images = train_df.sample(
+    n=12,
+    random_state=42
+)
+
+plt.figure(figsize=(12, 12))
+
+for i, (_, row) in enumerate(sample_images.iterrows()):
+
+    image_id = str(row["id"])
+
+    image_path = os.path.join(
+        TRAIN_FOLDER,
+        f"{image_id}.png"
+    )
+
+    image = Image.open(image_path)
+
+    plt.subplot(4, 3, i + 1)
+
+    plt.imshow(
+        image,
+        cmap="gray"
+    )
+
+    plt.title(
+        f"ID: {image_id}"
+    )
+
+    plt.axis("off")
+
+plt.suptitle(
+    "Random Original X-rays — Edge-Line Visual Inspection"
+)
+
+plt.tight_layout()
+
+artifact_output = os.path.join(
+    "outputs",
+    "eda_samples",
+    "edge_line_visual_check.png"
+)
+
+os.makedirs(
+    os.path.dirname(artifact_output),
+    exist_ok=True
+)
+
+plt.savefig(
+    artifact_output,
+    dpi=200,
+    bbox_inches="tight"
+)
+
+print("\n12 random original X-rays displayed.")
+
+print("\nVisualization saved to:")
+print(artifact_output)
+
+plt.show()
