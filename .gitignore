@@ -30,3 +30,5 @@ Thumbs.db
 *.h5
 *.keras
 *.ckpt
+# Generated visual outputs
+outputs/augmentation_samples/
