@@ -1,11 +1,8 @@
+
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 import tensorflow as tf
-
-from preprocess import preprocess_image
-from augmentation import augment_image
 
 
 # ============================================================
@@ -24,9 +21,8 @@ TEST_CSV = Path(
     "outputs/data_splits/test_split.csv"
 )
 
-IMAGE_DIR = Path(
-    "dataset/train_images"
-)
+# Google Drive dataset
+IMAGE_DIR = Path("/content/bone_age_train_images")
 
 
 # ============================================================
@@ -41,36 +37,76 @@ BATCH_SIZE = 8
 
 
 # ============================================================
-# LOAD SPLIT CSV
+# LOAD SPLIT
 # ============================================================
 
 def load_split(csv_path):
-    """
-    Load one of the previously created dataset splits.
-    """
-
-    df = pd.read_csv(csv_path)
-
-    return df
+    return pd.read_csv(csv_path)
 
 
 # ============================================================
-# LOAD AND PREPROCESS ONE IMAGE
+# PREPROCESS IMAGE
 # ============================================================
 
 def load_and_preprocess(image_id):
     """
-    Load one X-ray and apply the existing preprocessing pipeline.
+    Load one RSNA hand X-ray and preprocess it.
 
     Output:
-        512 × 512 × 3 image
+        512 x 512 x 3 float32 image
+        Pixel range remains 0-255 because
+        EfficientNet-B0 performs its own rescaling.
     """
 
-    image_path = IMAGE_DIR / f"{image_id}.png"
+    image_path = tf.strings.join(
+        [
+            tf.constant(str(IMAGE_DIR) + "/"),
+            tf.as_string(image_id),
+            tf.constant(".png")
+        ]
+    )
 
-    image = preprocess_image(image_path)
+    image = tf.io.read_file(image_path)
+
+    image = tf.image.decode_png(
+        image,
+        channels=1
+    )
+
+    image = tf.image.resize_with_pad(
+        image,
+        IMAGE_HEIGHT,
+        IMAGE_WIDTH,
+        method="lanczos3"
+    )
+
+    # Convert grayscale -> RGB
+    image = tf.image.grayscale_to_rgb(image)
+    image = tf.clip_by_value(image, 0.0, 255.0)
+
+    image = tf.cast(
+        image,
+        tf.float32
+    )
 
     return image
+
+
+# ============================================================
+# AUGMENTATION
+# ============================================================
+
+augmentation = tf.keras.Sequential(
+    [
+        tf.keras.layers.RandomTranslation(
+            height_factor=0.0,
+            width_factor=0.10,
+            fill_mode="constant",
+            fill_value=0
+        )
+    ],
+    name="bone_age_augmentation"
+)
 
 
 # ============================================================
@@ -80,97 +116,49 @@ def load_and_preprocess(image_id):
 def create_dataset(
     csv_path,
     training=False,
-    shuffle=True
+    shuffle=False
 ):
-    """
-    Create a TensorFlow dataset.
-
-    Training:
-        preprocessing + augmentation
-
-    Validation/Test:
-        preprocessing only
-    """
 
     df = load_split(csv_path)
 
-    image_ids = df["id"].astype(str).values
+    image_ids = df["id"].astype("int32").values
+    bone_ages = df["boneage"].astype("float32").values
 
-    bone_ages = (
-        df["boneage"]
-        .astype(np.float32)
-        .values
-    )
+    image_ids = tf.constant(image_ids)
+    bone_ages = tf.constant(bone_ages)
 
-    def generator():
-
-        for image_id, bone_age in zip(
-            image_ids,
-            bone_ages
-        ):
-
-            # --------------------------------------------
-            # PREPROCESS
-            # --------------------------------------------
-
-            image = load_and_preprocess(
-                image_id
-            )
-
-            # --------------------------------------------
-            # AUGMENT TRAINING IMAGES ONLY
-            # --------------------------------------------
-
-            if training:
-
-                image = augment_image(
-                    image
-                )
-
-                image = image.numpy()
-
-            # --------------------------------------------
-            # CONVERT TO FLOAT32
-            # --------------------------------------------
-
-            image = image.astype(
-                np.float32
-            )
-
-            bone_age = np.float32(
-                bone_age
-            )
-
-            yield image, bone_age
-
-    dataset = tf.data.Dataset.from_generator(
-        generator,
-        output_signature=(
-            tf.TensorSpec(
-                shape=(
-                    IMAGE_HEIGHT,
-                    IMAGE_WIDTH,
-                    IMAGE_CHANNELS
-                ),
-                dtype=tf.float32
-            ),
-
-            tf.TensorSpec(
-                shape=(),
-                dtype=tf.float32
-            )
-        )
+    dataset = tf.data.Dataset.from_tensor_slices(
+        (image_ids, bone_ages)
     )
 
     if training and shuffle:
-
         dataset = dataset.shuffle(
-        buffer_size=256,
-        reshuffle_each_iteration=True
+            buffer_size=256,
+            reshuffle_each_iteration=True
+        )
+
+    def process(image_id, bone_age):
+
+        image = load_and_preprocess(
+            image_id
+        )
+
+        if training:
+            image = augmentation(
+                image,
+                training=True
+            )
+
+        return image, bone_age
+
+    dataset = dataset.map(
+        process,
+        num_parallel_calls=tf.data.AUTOTUNE
     )
 
     dataset = dataset.batch(
-        BATCH_SIZE
+        BATCH_SIZE,
+        drop_remainder=False
     )
 
     dataset = dataset.prefetch(
@@ -181,7 +169,7 @@ def create_dataset(
 
 
 # ============================================================
-# CREATE TRAINING DATASET
+# PUBLIC DATASET FUNCTIONS
 # ============================================================
 
 def get_train_dataset(shuffle=True):
@@ -193,162 +181,19 @@ def get_train_dataset(shuffle=True):
     )
 
 
-# ============================================================
-# CREATE VALIDATION DATASET
-# ============================================================
-
 def get_validation_dataset():
 
     return create_dataset(
         VALIDATION_CSV,
-        training=False
+        training=False,
+        shuffle=False
     )
 
-
-# ============================================================
-# CREATE TEST DATASET
-# ============================================================
 
 def get_test_dataset():
 
     return create_dataset(
         TEST_CSV,
-        training=False
+        training=False,
+        shuffle=False
     )
-
-
-# ============================================================
-# TEST THE PIPELINE
-# ============================================================
-
-if __name__ == "__main__":
-
-    print("=" * 60)
-    print("DATA PIPELINE TEST")
-    print("=" * 60)
-
-    # --------------------------------------------------------
-    # TRAINING DATA
-    # --------------------------------------------------------
-
-    print("\nCreating training dataset...")
-
-    train_dataset = get_train_dataset()
-
-    train_images, train_labels = next(
-        iter(train_dataset)
-    )
-
-    print("\nTRAINING BATCH")
-    print("-" * 40)
-
-    print(
-        "Image batch shape :",
-        train_images.shape
-    )
-
-    print(
-        "Image data type   :",
-        train_images.dtype
-    )
-
-    print(
-        "Pixel minimum     :",
-        tf.reduce_min(train_images).numpy()
-    )
-
-    print(
-        "Pixel maximum     :",
-        tf.reduce_max(train_images).numpy()
-    )
-
-    print(
-        "Bone-age labels   :",
-        train_labels.numpy()
-    )
-
-    # --------------------------------------------------------
-    # VALIDATION DATA
-    # --------------------------------------------------------
-
-    print("\nCreating validation dataset...")
-
-    validation_dataset = (
-        get_validation_dataset()
-    )
-
-    validation_images, validation_labels = next(
-        iter(validation_dataset)
-    )
-
-    print("\nVALIDATION BATCH")
-    print("-" * 40)
-
-    print(
-        "Image batch shape :",
-        validation_images.shape
-    )
-
-    print(
-        "Image data type   :",
-        validation_images.dtype
-    )
-
-    print(
-        "Pixel minimum     :",
-        tf.reduce_min(validation_images).numpy()
-    )
-
-    print(
-        "Pixel maximum     :",
-        tf.reduce_max(validation_images).numpy()
-    )
-
-    print(
-        "Bone-age labels   :",
-        validation_labels.numpy()
-    )
-
-    # --------------------------------------------------------
-    # TEST DATA
-    # --------------------------------------------------------
-
-    print("\nCreating test dataset...")
-
-    test_dataset = get_test_dataset()
-
-    test_images, test_labels = next(
-        iter(test_dataset)
-    )
-
-    print("\nTEST BATCH")
-    print("-" * 40)
-
-    print(
-        "Image batch shape :",
-        test_images.shape
-    )
-
-    print(
-        "Image data type   :",
-        test_images.dtype
-    )
-
-    print(
-        "Pixel minimum     :",
-        tf.reduce_min(test_images).numpy()
-    )
-
-    print(
-        "Pixel maximum     :",
-        tf.reduce_max(test_images).numpy()
-    )
-
-    print(
-        "Bone-age labels   :",
-        test_labels.numpy()
-    )
-
-    print("\n" + "=" * 60)
-    print("DATA PIPELINE TEST COMPLETED")
-    print("=" * 60)

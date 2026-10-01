@@ -1,8 +1,9 @@
+
 import os
 import tensorflow as tf
 
-from model import build_model
-from data_pipeline import (
+from src.model import build_model
+from src.data_pipeline import (
     get_train_dataset,
     get_validation_dataset
 )
@@ -17,6 +18,12 @@ BATCH_SIZE = 8
 INITIAL_LEARNING_RATE = 0.001
 
 EPOCHS = 1
+
+TRAIN_SAMPLES = 8070
+VALIDATION_SAMPLES = 2018
+
+STEPS_PER_EPOCH = (TRAIN_SAMPLES + BATCH_SIZE - 1) // BATCH_SIZE
+VALIDATION_STEPS = (VALIDATION_SAMPLES + BATCH_SIZE - 1) // BATCH_SIZE
 
 CHECKPOINT_DIR = "outputs/checkpoints"
 MODEL_PATH = "outputs/efficientnet_b0_best.keras"
@@ -42,18 +49,25 @@ else:
 
 
 # ============================================================
+# TRAINING INFORMATION
+# ============================================================
+
+print("\nTraining configuration:")
+print("Training samples      :", TRAIN_SAMPLES)
+print("Validation samples    :", VALIDATION_SAMPLES)
+print("Batch size            :", BATCH_SIZE)
+print("Steps per epoch       :", STEPS_PER_EPOCH)
+print("Validation steps      :", VALIDATION_STEPS)
+print("Epochs                :", EPOCHS)
+print("Learning rate         :", INITIAL_LEARNING_RATE)
+
+
+# ============================================================
 # CREATE OUTPUT DIRECTORIES
 # ============================================================
 
-os.makedirs(
-    CHECKPOINT_DIR,
-    exist_ok=True
-)
-
-os.makedirs(
-    "outputs",
-    exist_ok=True
-)
+os.makedirs(CHECKPOINT_DIR, exist_ok=True)
+os.makedirs("outputs", exist_ok=True)
 
 
 # ============================================================
@@ -62,10 +76,7 @@ os.makedirs(
 
 print("\nLoading datasets...")
 
-train_dataset = get_train_dataset(
-    shuffle=True
-)
-
+train_dataset = get_train_dataset(shuffle=True)
 validation_dataset = get_validation_dataset()
 
 print("✓ Training dataset loaded.")
@@ -93,12 +104,8 @@ model.compile(
     ),
     loss=tf.keras.losses.MeanSquaredError(),
     metrics=[
-        tf.keras.metrics.MeanAbsoluteError(
-            name="mae"
-        ),
-        tf.keras.metrics.RootMeanSquaredError(
-            name="rmse"
-        )
+        tf.keras.metrics.MeanAbsoluteError(name="mae"),
+        tf.keras.metrics.RootMeanSquaredError(name="rmse")
     ]
 )
 
@@ -147,6 +154,8 @@ history = model.fit(
     train_dataset,
     validation_data=validation_dataset,
     epochs=EPOCHS,
+    steps_per_epoch=STEPS_PER_EPOCH,
+    validation_steps=VALIDATION_STEPS,
     callbacks=[
         checkpoint,
         early_stopping,
@@ -161,9 +170,7 @@ history = model.fit(
 
 final_model_path = "outputs/efficientnet_b0_final.keras"
 
-model.save(
-    final_model_path
-)
+model.save(final_model_path)
 
 print("\n" + "=" * 60)
 print("TRAINING COMPLETED")
